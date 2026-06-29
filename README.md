@@ -32,6 +32,7 @@ disaster recovery — **without any replication byte leaving `us-east-1`**.
 - [Prerequisites](#prerequisites)
 - [Step-by-step](#step-by-step)
 - [Reaching all brokers (the Kafka proxy)](#reaching-all-brokers-the-kafka-proxy)
+- [Proxy vs ClusterMesh](#proxy-vs-clustermesh)
 - [Validation](#validation)
 - [Cost model](#cost-model)
 - [Teardown](#teardown)
@@ -243,6 +244,33 @@ link's tiny control traffic to gcp/azure brokers crosses clouds (proxy →
 ClusterMesh). Deploy it with `shadow/manifests/shadow-kafka-proxy*.yaml`
 (create the Service first, then render the proxy's `advertisedBrokerAddressPattern`
 with the LB hostname).
+
+## Proxy vs ClusterMesh
+
+The proxy isn't the only way to give the shadow all-broker reachability — you
+could instead make the shadow a 4th **Cilium ClusterMesh** member. Here's the
+honest trade-off (learned from actually building the proxy path):
+
+| | Kafka proxy in rp-aws (this repo) | Shadow joins the ClusterMesh |
+|---|---|---|
+| **Reachability to gcp/azure brokers** | Reuses rp-aws's *existing* mesh membership as a gateway — shadow needs nothing | Shadow's mesh data plane encapsulates to peer **node InternalIPs**, so it still needs routes to gcp/azure nodes → **must extend the IPsec VPN mesh to the shadow VPC** (the ~2–3h, convergence-prone work) |
+| **Consumer-offset sync** | ⚠️ `No brokers available` — the `FindCoordinator`/consumer-group path doesn't survive the proxy's address rewriting | ✅ Likely works — the link talks to real brokers at real addresses |
+| **Extra components / hops** | A proxy Deployment + internal LB; one extra hop; port-per-broker rewrite config to maintain | None — pod-to-pod direct |
+| **Shadow CNI** | Untouched (AWS VPC CNI) | Must swap to **Cilium** (recreate pod networking, restart shadow Redpanda) |
+| **Cross-cluster DNS** | N/A — proxy presents its own addresses | Shadow lacks the operator's peer headless Services/EndpointSlices (it isn't a stretch member) → must replicate them |
+| **Operational model** | A second mechanism bolted alongside the mesh | Consistent with the rest of the scaffold (one networking model) |
+| **Data-path region-locality** | Region-local (leaders pinned to aws) | Region-local (same) |
+
+**Net:** ClusterMesh is the cleaner *end state* and would close the offset-sync
+caveat, but in this dedicated-peered-VPC topology it's the **heavier** path — it
+inherits the same node-IP reachability problem (needs the VPN-mesh extension),
+plus a CNI swap and DNS plumbing. The proxy was chosen because it **reuses
+rp-aws's existing mesh membership**, so the shadow stays a simple, isolated
+cluster. Pick ClusterMesh if you're building the shadow as a true 4th mesh
+member from the start (Cilium CNI + VPN reachability to all clouds) and want
+full, native sync; pick the proxy for a lightweight bolt-on. For a
+**single-region source**, neither is needed — plain peering + the NodePort
+listener reaches every broker.
 
 ## Validation
 
