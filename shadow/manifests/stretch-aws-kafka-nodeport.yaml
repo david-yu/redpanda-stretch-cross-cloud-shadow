@@ -1,0 +1,32 @@
+# NodePort Service exposing the rp-aws brokers' external Kafka listener
+# (container port 9094, advertised as <pod>:31092) on the node IPs, so the
+# shadow cluster can reach them over the VPC peering.
+#
+# The StretchCluster operator runs in flat cross-cluster mode and does NOT
+# create a NodePort/LoadBalancer Service for the external listener, so we
+# create one here. externalTrafficPolicy: Local is REQUIRED — it makes
+# <nodeIP>:31092 route only to the broker pod running on THAT node, so each
+# broker's advertised address (its own node IP) lands on the right broker
+# (Kafka clients must reach the specific advertised broker, not a random one).
+#
+# Applied to rp-aws only.
+apiVersion: v1
+kind: Service
+metadata:
+  name: redpanda-external-kafka
+  namespace: redpanda
+  labels:
+    app.kubernetes.io/part-of: shadow-link
+spec:
+  type: NodePort
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/cluster-name: rp-aws
+    app.kubernetes.io/instance: redpanda
+    app.kubernetes.io/name: redpanda
+  ports:
+    - name: kafka-external
+      port: 9094
+      targetPort: 9094
+      nodePort: 31092
+      protocol: TCP

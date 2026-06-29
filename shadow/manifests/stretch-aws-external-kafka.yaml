@@ -1,0 +1,57 @@
+# Merge-patch that enables a plaintext NodePort external Kafka listener on
+# the StretchCluster, so the shadow cluster (separate EKS, VPC-peered) can
+# reach the brokers' Kafka API for shadow-link replication.
+#
+# MUST be applied to ALL THREE cluster contexts (rp-aws, rp-gcp, rp-azure).
+# The StretchCluster operator enforces an identical .spec across every
+# member cluster — patching only one leaves it in SpecSynced=False
+# ("reconciliation is blocked until specs are aligned"), so the listener
+# never materializes. With it applied everywhere, each broker advertises its
+# OWN cloud's node IP on nodePort 31092.
+#
+# Region-local by leader pinning: leaders are pinned to the AWS rack
+# (default_leaders_preference: ordered_racks:aws,gcp,azure), so every
+# load-test partition leader sits on an aws broker. The shadow link (in
+# us-east-1, VPC-peered to rp-aws) therefore only ever fetches from the aws
+# brokers' advertised node IPs (10.10.x, reachable over the peering); the
+# gcp/azure brokers advertise their own node IPs (10.20.x / 10.30.x), which
+# the shadow link never connects to because they don't lead load-test.
+#
+# Plaintext: the hop is shadow VPC -> rp-aws node IP over the VPC peering,
+# inside us-east-1 on the AWS backbone, so no TLS is needed (matches the
+# rest of this scaffold).
+#
+# Apply (all three):
+#   for ctx in rp-aws rp-gcp rp-azure; do
+#     kubectl --context $ctx -n redpanda patch stretchcluster redpanda \
+#       --type merge --patch-file shadow/manifests/stretch-aws-external-kafka.yaml
+#   done
+spec:
+  external:
+    enabled: true
+  listeners:
+    kafka:
+      external:
+        default:
+          enabled: true
+          port: 9094
+          nodePort: 31092
+          tls:
+            enabled: false
+    # Keep every OTHER listener's external endpoint OFF — only Kafka needs
+    # to be reachable from the shadow VPC, and leaving admin/http/schema
+    # external listeners disabled avoids the operator emitting external
+    # listeners that reference non-existent TLS certs (the #1499 crash this
+    # scaffold already works around).
+    admin:
+      external:
+        default:
+          enabled: false
+    http:
+      external:
+        default:
+          enabled: false
+    schemaRegistry:
+      external:
+        default:
+          enabled: false

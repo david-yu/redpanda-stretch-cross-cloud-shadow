@@ -1,0 +1,12 @@
+# Never commit state, plans, provider cache, licenses, kubeconfigs, secrets
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+.terraform.lock.hcl
+*.license
+*.key
+kubeconfig*
+*.local.yaml
+.DS_Store
+*.log

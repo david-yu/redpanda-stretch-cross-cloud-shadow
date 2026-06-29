@@ -1,0 +1,91 @@
+# OMB-equivalent producer load generator for the cross-cloud StretchCluster.
+#
+# Targets a deliberately tiny ~0.8 Mbps of writes (25 msg/s × 4 KiB ≈
+# 102.4 KB/s ≈ 0.82 Mbps on the wire) — under the 1 Mbps ceiling requested
+# for the shadow-link demo, where the point is to watch replication lag and
+# region-local fetch paths, not to saturate the cluster. The historical
+# ~30 MB/s setting (7680 msg/s × 4 KiB) and other rates live in the tuning
+# table in omb/README.md if you want to push throughput back up.
+#
+# Connects PLAINTEXT (broker TLS is intentionally off in this scaffold —
+# see aws/manifests/stretchcluster.yaml for why; cross-cloud encryption is
+# already provided by the IPsec VPN tier in vpn/terraform/).
+#
+# Why "OMB" but kafka-perf-test under the hood: same reason as the same-cloud
+# beta — OMB-on-VM adds cross-cloud routing + driver-config rendering for no
+# extra information; the bundled kafka-perf-test produces the same per-second
+# throughput / latency telemetry from inside the redpanda namespace.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: omb-producer
+  namespace: redpanda
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      volumes:
+        - name: producer-config
+          configMap:
+            name: omb-producer-config
+      containers:
+        - name: producer
+          image: apache/kafka:3.8.0
+          volumeMounts:
+            - name: producer-config
+              mountPath: /etc/kafka/producer.properties
+              subPath: producer.properties
+              readOnly: true
+          command:
+            - /bin/bash
+            - -ec
+            - |
+              # Headless DNS can take 10-30s after a fresh cluster create.
+              for i in $(seq 1 30); do
+                getent hosts redpanda.redpanda.svc.cluster.local && break
+                sleep 2
+              done
+              # 25 msg/s × 4 KiB ≈ 0.82 Mbps. --num-records 2160000 exits
+              # after ~24h at this rate; the Job's logs are the primary
+              # signal — tail with `kubectl -n redpanda logs -f job/omb-producer`.
+              exec /opt/kafka/bin/kafka-producer-perf-test.sh \
+                --topic load-test \
+                --num-records 2160000 \
+                --record-size 4096 \
+                --throughput 25 \
+                --producer.config /etc/kafka/producer.properties \
+                --print-metrics
+          # 0.82 Mbps needs almost no CPU — trimmed from the 30 MB/s sizing.
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: omb-producer-config
+  namespace: redpanda
+data:
+  producer.properties: |
+    # Port 9093, NOT 9092: the operator keeps the TLS-conventional port
+    # number even with `tls.enabled: false`. Confirmed via the redpanda
+    # headless Service spec.
+    bootstrap.servers=redpanda.redpanda.svc.cluster.local:9093
+    security.protocol=PLAINTEXT
+    # acks=all so a regional outage is visible in the producer's metrics
+    # (the producer blocks on min.insync.replicas instead of silently
+    # dropping records under broker unavailability).
+    acks=all
+    linger.ms=5
+    batch.size=262144
+    compression.type=lz4
+    delivery.timeout.ms=120000
+    request.timeout.ms=30000
+    max.in.flight.requests.per.connection=5
+    enable.idempotence=true

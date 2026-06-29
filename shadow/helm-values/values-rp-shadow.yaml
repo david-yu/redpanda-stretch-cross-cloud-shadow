@@ -1,0 +1,72 @@
+# Helm values for the standalone shadow cluster (rp-shadow EKS, us-east-1).
+#
+# Deployed with the `redpanda-data/redpanda` chart — NOT the operator chart
+# the stretch clusters use. The shadow cluster is a plain single-region
+# 3-broker Redpanda; it doesn't join the Cilium ClusterMesh and isn't part
+# of the StretchCluster. The shadow LINK to the stretch cluster is created
+# separately with `rpk shadow create` (see scripts/install-shadow.sh and
+# shadow/shadow-link.yaml) rather than the ShadowLink CRD, to avoid any
+# dependency on the multicluster operator's reconciler set (cf. K8S-846).
+#
+#   helm install redpanda redpanda-data/redpanda -n redpanda \
+#     --kube-context rp-shadow -f shadow/helm-values/values-rp-shadow.yaml
+#
+# Requires a chart whose Redpanda appVersion is >= 25.3 (shadow linking GA).
+# install-shadow.sh picks the newest chart version for you; pin image.tag
+# here if you need a specific build.
+
+fullnameOverride: redpanda
+
+statefulset:
+  replicas: 3
+
+# Plaintext everywhere — matches the stretch cluster (broker TLS is off in
+# this scaffold). Keeps the shadow-link config simple (no CA wiring) and the
+# replication hop is already region-local inside us-east-1 over VPC peering.
+tls:
+  enabled: false
+
+# The shadow cluster doesn't need external/cross-cloud access; clients and
+# the shadow link reach it in-cluster. No LoadBalancers.
+external:
+  enabled: false
+
+# Shadow linking is an Enterprise feature and must be enabled on the SHADOW
+# (destination) cluster. install-shadow.sh also sets this at runtime via
+# `rpk cluster config set` as a belt-and-suspenders, but declaring it here
+# means it's correct from first boot.
+enterprise:
+  licenseSecretRef:
+    name: redpanda-license
+    key: license.key
+
+config:
+  cluster:
+    enable_shadow_linking: true
+    # No auth on the source cluster in this scaffold, so the shadow cluster
+    # needs none either. (If you enable SASL on the stretch cluster later,
+    # add a replication service account + creds to shadow-link.yaml.)
+
+auth:
+  sasl:
+    enabled: false
+
+storage:
+  persistentVolume:
+    enabled: true
+    storageClass: ebs-sc
+    # 0.8 Mbps OMB load with 1h retention is tiny; 50Gi is plenty of
+    # headroom for the shadowed load-test topic plus any demo topics.
+    size: 50Gi
+
+resources:
+  cpu:
+    cores: 1
+  memory:
+    container:
+      max: 2.5Gi
+
+# Console is optional on the shadow side; the stretch cluster already ships
+# one. Disable to keep the shadow footprint minimal.
+console:
+  enabled: false
