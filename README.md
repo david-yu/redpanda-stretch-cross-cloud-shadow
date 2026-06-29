@@ -71,17 +71,17 @@ Two pieces make that connection work while keeping it on the AWS backbone:
 
 ```
                         AWS us-east-1
-   ┌─────────────────────────────────────────────────────────────────┐
+   ┌────────────────────────────────────────────────────────────--─────┐
    │                                                                   │
-   │   rp-aws VPC 10.10.0.0/16            rp-shadow VPC 10.40.0.0/16    │
-   │   ┌───────────────────────┐         ┌──────────────────────────┐ │
-   │   │ EKS rp-aws (stretch)   │  VPC    │ EKS rp-shadow             │ │
-   │   │  brokers 0,1 (rack=aws)│◀═peering═▶ redpanda 0,1,2 (RF=3)   │ │
-   │   │  ALL load-test leaders │ (active)│  Shadow Link consumer    │ │
-   │   │  NodePort :31092 ──────┼─────────┼─▶ fetch from leaders     │ │
-   │   └───────────┬───────────┘         └──────────────────────────┘ │
+   │   rp-aws VPC 10.10.0.0/16            rp-shadow VPC 10.40.0.0/16   │
+   │   ┌───────────────────────┐         ┌──────────────────────────┐  │
+   │   │ EKS rp-aws (stretch)   │  VPC    │ EKS rp-shadow           │  │
+   │   │  brokers 0,1 (rack=aws)│◀═peering═▶ redpanda 0,1,2 (RF=3)  │  │
+   │   │  ALL load-test leaders │ (active)│  Shadow Link consumer   │  │
+   │   │  NodePort :31092 ──────┼─────────┼─▶ fetch from leaders    │  │
+   │   └───────────┬───────────┘         └──────────────────────────┘  │
    │               │ Cilium ClusterMesh + IPsec VPN                    │
-   └───────────────┼───────────────────────────────────────────────── ┘
+   └───────────────┼─────────────────────────────────────────────────- ┘
                    │ (cross-cloud, base scaffold only)
         ┌──────────┴──────────┐
      GCP us-east1          Azure eastus
