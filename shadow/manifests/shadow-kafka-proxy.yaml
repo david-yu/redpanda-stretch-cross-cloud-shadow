@@ -1,0 +1,66 @@
+# kroxylicious proxy: fronts the stretch cluster's internal Kafka listener
+# (reaches all 5 brokers via flat networking + ClusterMesh from inside
+# rp-aws) and re-advertises every broker on the internal LB so the shadow
+# cluster can reach all brokers for shadow-link control-plane ops. Data for
+# aws-pinned leaders flows shadow -> LB(rp-aws) -> proxy(rp-aws) -> aws
+# broker(rp-aws): entirely within us-east-1 (region-local). gcp/azure broker
+# control traffic goes proxy -> ClusterMesh (cross-cloud, tiny).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shadow-kafka-proxy-config
+  namespace: redpanda
+data:
+  config.yaml: |
+    management:
+      endpoints:
+        prometheus: {}
+    virtualClusters:
+      - name: stretch
+        targetCluster:
+          bootstrapServers: redpanda.redpanda.svc.cluster.local:9093
+        gateways:
+          - name: shadow
+            portIdentifiesNode:
+              bootstrapAddress: __PROXY_LB_HOSTNAME__:9192
+              advertisedBrokerAddressPattern: __PROXY_LB_HOSTNAME__
+              nodeIdRanges:
+                - name: brokers
+                  start: 0
+                  end: 4
+        logNetwork: false
+        logFrames: false
+    defaultFilters: []
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shadow-kafka-proxy
+  namespace: redpanda
+  labels: { app: shadow-kafka-proxy }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: shadow-kafka-proxy } }
+  template:
+    metadata:
+      labels: { app: shadow-kafka-proxy }
+    spec:
+      containers:
+        - name: kroxylicious
+          image: quay.io/kroxylicious/kroxylicious:0.13.0
+          args: ["--config", "/etc/kroxylicious/config.yaml"]
+          ports:
+            - { containerPort: 9192 }
+            - { containerPort: 9193 }
+            - { containerPort: 9194 }
+            - { containerPort: 9195 }
+            - { containerPort: 9196 }
+            - { containerPort: 9197 }
+          volumeMounts:
+            - { name: config, mountPath: /etc/kroxylicious }
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits: { cpu: "1", memory: "1Gi" }
+      volumes:
+        - name: config
+          configMap: { name: shadow-kafka-proxy-config }

@@ -1,50 +1,30 @@
-# ShadowLinkConfig for `rpk shadow create -c shadow-link.yaml`.
+# ShadowLinkConfig for `rpk shadow create -c shadow-link.yaml`, run FROM the
+# shadow cluster (rp-shadow). Replicates the stretch cluster's load-test topic
+# (and offsets) into the shadow cluster for DR.
 #
-# Run FROM the shadow cluster (rp-shadow). Replicates the stretch cluster's
-# topics (incl. the OMB `load-test` topic), consumer offsets, and topic
-# configs into the shadow cluster for disaster recovery.
+# bootstrap_servers points at the kroxylicious proxy in rp-aws (see
+# shadow/manifests/shadow-kafka-proxy*.yaml), which fronts ALL 5 stretch
+# brokers and re-advertises them on the internal LB the shadow reaches over
+# the VPC peering. install-shadow.sh substitutes the proxy LB hostname.
 #
-# REGION-LOCAL by construction:
-#   - bootstrap_servers points at the stretch cluster's AWS brokers (rp-aws)
-#     ONLY — never the GCP/Azure brokers. install-shadow.sh fills in the
-#     rp-aws Kafka endpoint reachable over the VPC peering inside us-east-1.
-#   - Shadow linking is pull-based and fetches from each partition's LEADER.
-#     The stretch cluster pins all leaders to the AWS rack
-#     (`default_leaders_preference: ordered_racks:aws,gcp,azure`), so those
-#     leaders sit on the rp-aws brokers. Shadow (in us-east-1) -> rp-aws
-#     leaders (in us-east-1) over VPC peering = traffic never leaves the
-#     region and never crosses a cloud boundary.
-#
-# No TLS / no SASL: the stretch cluster runs plaintext with auth off in this
-# scaffold (see aws/manifests/stretchcluster.yaml), and confidentiality on
-# the wire isn't a concern for an intra-region AWS-backbone hop.
-
+# Region-local: load-test leaders are pinned to the AWS rack, so data is
+# fetched shadow -> LB(rp-aws) -> proxy(rp-aws) -> aws broker(rp-aws), entirely
+# inside us-east-1. Only the link's small control-plane traffic to the
+# gcp/azure brokers crosses clouds (via the proxy + ClusterMesh).
 name: stretch-to-shadow-dr
-
 client_options:
   bootstrap_servers:
-    # Substituted by install-shadow.sh with the rp-aws brokers' Kafka
-    # endpoint that is reachable from the shadow VPC over the peering
-    # (an internal-scheme listener on the stretch rp-aws cluster).
-    - "__STRETCH_AWS_KAFKA_ENDPOINT__"
-  # The cross-VPC hop is a few ms but bump the connect timeout off its
-  # 1000ms default for headroom during broker churn / failover demos.
+    - "__PROXY_LB_HOSTNAME__:9192"
   connection_timeout_ms: 5000
   metadata_max_age_ms: 10000
-
 topic_metadata_sync_options:
-  interval: 30s
-  # Replicate every user topic. Narrow this to `load-test` (LITERAL) if you
-  # only want the OMB topic shadowed for the demo.
+  interval: 15s
   auto_create_shadow_topic_filters:
     - pattern_type: LITERAL
       filter_type: INCLUDE
-      name: "*"
-  # Mirror from the start of each source topic so the shadow holds full
-  # history (within the source's retention).
+      name: "load-test"   # widen to '*' for full-cluster DR
   start_at_earliest: {}
   paused: false
-
 consumer_offset_sync_options:
   interval: 30s
   paused: false
@@ -52,7 +32,5 @@ consumer_offset_sync_options:
     - pattern_type: LITERAL
       filter_type: INCLUDE
       name: "*"
-
-# No ACLs to sync — auth is off on the source. Leave paused.
 security_sync_options:
   paused: true

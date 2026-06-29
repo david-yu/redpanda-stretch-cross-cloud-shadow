@@ -1,0 +1,21 @@
+# Internal LoadBalancer fronting the kroxylicious proxy in rp-aws. Reachable
+# from the shadow VPC over the VPC peering (private addresses, us-east-1).
+# Multi-port: 9192 = proxy bootstrap, 9193-9197 = per-broker (node id 0-4).
+apiVersion: v1
+kind: Service
+metadata:
+  name: shadow-kafka-proxy
+  namespace: redpanda
+  labels: { app: shadow-kafka-proxy }
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+spec:
+  type: LoadBalancer
+  selector: { app: shadow-kafka-proxy }
+  ports:
+    - { name: bootstrap, port: 9192, targetPort: 9192 }
+    - { name: broker0,   port: 9193, targetPort: 9193 }
+    - { name: broker1,   port: 9194, targetPort: 9194 }
+    - { name: broker2,   port: 9195, targetPort: 9195 }
+    - { name: broker3,   port: 9196, targetPort: 9196 }
+    - { name: broker4,   port: 9197, targetPort: 9197 }
