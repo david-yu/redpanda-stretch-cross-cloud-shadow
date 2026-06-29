@@ -307,8 +307,7 @@ Confirmed end-to-end on a live run (Redpanda v26.1, RF=5 stretch / RF=3 shadow):
 
 If you don't want the proxy, two other ways to give the shadow all-broker
 reachability: (1) point it at a **single-region source** (e.g. the
-[same-cloud beta](https://github.com/david-yu/redpanda-operator-stretch-beta)) —
-then the plain peered-VPC + NodePort exposure (`stretch-aws-kafka-nodeport.yaml`
+[same-cloud beta](https://github.com/david-yu/redpanda-operator-stretch-beta)) — then the plain peered-VPC + NodePort exposure (`stretch-aws-kafka-nodeport.yaml`
 + shadow CoreDNS hosts) reaches every broker; or (2) **join the shadow to the
 cross-cloud Cilium ClusterMesh / VPN mesh**. Both keep data region-local via the
 aws-pinned leaders.
